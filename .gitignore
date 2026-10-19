@@ -1,0 +1,14 @@
+# Local source data and reproducible run outputs
+data/raw/*.gz
+data/interim/*
+data/processed/*.parquet
+models/*.joblib
+reports/figures/*.png
+reports/results/*.csv
+reports/results/*.json
+
+# Python environment/cache
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]

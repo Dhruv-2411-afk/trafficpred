@@ -1,0 +1,52 @@
+from pathlib import Path
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+st.set_page_config(page_title="PeMS Congestion Research",layout="wide")
+st.title("Traffic Congestion as a Probability Problem")
+data_path=Path("data/processed/hourly_features.parquet")
+if not data_path.exists(): st.info("Run `python run_pipeline.py` after placing PeMS files in `data/raw/`."); st.stop()
+df=pd.read_parquet(data_path); df["timestamp"]=pd.to_datetime(df["timestamp"])
+station=st.sidebar.selectbox("Station",sorted(df.station_id.unique())); subset=df[df.station_id==station].copy()
+date=st.sidebar.date_input("Date",value=subset.timestamp.min().date()); horizon=st.sidebar.number_input("Prediction horizon (hours)",1,24,1)
+page=st.sidebar.radio("Page",["Overview","Traffic Analysis","Probability Analysis","Queueing Analysis","ML Prediction","Model Comparison","Explainability"])
+st.caption(f"Station {station} | configured horizon: +{horizon} h. Dashboard reports stored model outputs; it does not retrain interactively.")
+if page=="Overview":
+    st.subheader("Station overview")
+    latest=subset.dropna(subset=["flow"]).iloc[-1]
+    a,b,c,d=st.columns(4); a.metric("Observations",f"{len(subset):,}"); b.metric("Mean hourly flow",f"{subset.flow.mean():,.0f}"); c.metric("Mean speed",f"{subset.avg_speed.mean():.1f} mph"); d.metric("Congestion frequency",f"{subset.congested.mean():.1%}")
+    st.plotly_chart(px.line(subset,x="timestamp",y=["flow","avg_speed"],title="Flow and speed over time",labels={"value":"Value","variable":"Measure"}),use_container_width=True)
+    left,right=st.columns(2)
+    hourly=subset.groupby("hour",as_index=False).agg(flow=("flow","mean"),speed=("avg_speed","mean"),congestion=("congested","mean"))
+    left.plotly_chart(px.bar(hourly,x="hour",y="flow",title="Average flow by hour of day"),use_container_width=True)
+    right.plotly_chart(px.line(hourly,x="hour",y="congestion",markers=True,title="Congestion probability by hour",labels={"congestion":"Probability"}),use_container_width=True)
+    st.plotly_chart(px.density_heatmap(subset,x="hour",y="weekday",z="flow",histfunc="avg",color_continuous_scale="Viridis",title="Average flow heatmap: weekday × hour"),use_container_width=True)
+    with st.expander("Descriptive statistics"): st.dataframe(subset.describe().T,use_container_width=True)
+elif page=="Traffic Analysis": st.line_chart(subset.set_index("timestamp")[["flow","avg_speed","avg_occupancy"]]); st.dataframe(subset[["timestamp","flow","congested"]].tail(100))
+elif page=="Probability Analysis": st.line_chart(subset.set_index("timestamp")[["arrival_rate_lambda","poisson_congestion_probability"]])
+elif page=="Queueing Analysis": st.line_chart(subset.set_index("timestamp")[["traffic_intensity","estimated_queue_length","estimated_waiting_time"]])
+elif page=="ML Prediction":
+    pred=Path("reports/results/test_predictions.csv"); st.dataframe(pd.read_csv(pred).query("station_id == @station").tail(50) if pred.exists() else pd.DataFrame())
+elif page=="Model Comparison":
+    metric_path=Path("reports/results/model_metrics.csv"); prediction_path=Path("reports/results/test_predictions.csv")
+    if not metric_path.exists(): st.info("Run the pipeline to generate model metrics."); st.stop()
+    metrics=pd.read_csv(metric_path).sort_values("RMSE")
+    st.subheader("Chronological test-set model comparison")
+    selected_metric=st.selectbox("Metric",["RMSE","MAE","MSE","R2","Adjusted_R2","MAPE"])
+    chart=px.bar(metrics,x="experiment",y=selected_metric,color="model",barmode="group",title=f"{selected_metric} by feature experiment and model")
+    st.plotly_chart(chart,use_container_width=True)
+    left,right=st.columns(2)
+    best=metrics.iloc[0]; left.metric("Best test RMSE",f"{best.RMSE:,.2f}",f"{best.model} · {best.experiment}")
+    right.plotly_chart(px.scatter(metrics,x="MAE",y="RMSE",color="experiment",symbol="model",hover_data=["R2","MAPE","features"],title="Error trade-off: MAE vs RMSE"),use_container_width=True)
+    st.dataframe(metrics,use_container_width=True)
+    if prediction_path.exists():
+        pred=pd.read_csv(prediction_path); available=pred[(pred.station_id==station) & (pred.experiment==best.experiment) & (pred.model==best.model)].copy()
+        if not available.empty:
+            available["residual"]=available.actual-available.predicted
+            left,right=st.columns(2)
+            left.plotly_chart(px.scatter(available,x="actual",y="predicted",title="Actual vs predicted test flow"),use_container_width=True)
+            right.plotly_chart(px.histogram(available,x="residual",nbins=35,title="Residual distribution"),use_container_width=True)
+            st.plotly_chart(px.line(available,x="timestamp",y=["actual","predicted"],title="Held-out chronological predictions"),use_container_width=True)
+else: st.info("Feature importance/SHAP can be generated from saved tree models. SHAP is optional and should be interpreted as association, not causation.")

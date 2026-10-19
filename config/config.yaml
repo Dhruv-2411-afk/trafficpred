@@ -1,0 +1,26 @@
+paths:
+  raw: data/raw
+  interim: data/interim
+  processed: data/processed
+  models: models
+  figures: reports/figures
+  results: reports/results
+data:
+  chunksize: 200000
+  station_limit: 15
+  aggregation: 1h
+  date_start: null
+  date_end: null
+features:
+  prediction_horizon_hours: 1
+  rolling_windows: [3, 6, 12]
+  congestion_speed_mph: 45
+  congestion_occupancy: 0.12
+  service_rate_quantile: 0.9
+experiment:
+  train_ratio: 0.70
+  validation_ratio: 0.15
+  test_ratio: 0.15
+  random_state: 42
+  simulation_count: 10000
+  target: flow
